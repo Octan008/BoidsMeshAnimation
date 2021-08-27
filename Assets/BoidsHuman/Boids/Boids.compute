@@ -1,0 +1,502 @@
+﻿// カーネル関数を指定
+#pragma kernel ForceCS      // 操舵力を計算
+#pragma kernel IntegrateCS  // 速度, 位置を計算
+
+
+#include "SimplexNoise.cginc"
+#include "NoiseMath.cginc"
+
+
+// Boidデータの構造体
+struct BoidData
+{
+	float3 velocity; // 速度
+	float3 position; // 位置
+	float AnimationOffset;
+	float3 Color;
+	float Scale;
+	int Type;
+	float3 forward;
+	float2 speeds;
+	uint neib;
+};
+
+struct MeshVertData
+{
+	float3 position;
+	float3 normal;
+};
+struct ForceData {
+	float3 force;
+	uint3 nearests;
+	float3 nearP;
+	float3 col;
+	uint neib;
+	float3 prevE;
+};
+
+#define SIMULATION_BLOCK_SIZE 256
+#define SIMULATION_BLOCK_SIZE_VERT 256
+
+StructuredBuffer<BoidData>   _BoidDataBufferRead;
+RWStructuredBuffer<BoidData> _BoidDataBufferWrite;
+StructuredBuffer<ForceData>     _BoidForceBufferRead;
+RWStructuredBuffer<ForceData>   _BoidForceBufferWrite;
+StructuredBuffer<MeshVertData> _MeshBuffer;
+StructuredBuffer<int> _P;
+
+int _MaxBoidObjectNum; 
+int _MaxVertObjectNum; 
+
+bool _debug;
+
+float _DeltaTime;    
+float _Time;
+uint _mode;
+
+float _SeparateNeighborhoodRadius;  
+float _AlignmentNeighborhoodRadius; 
+float _CohesionNeighborhoodRadius;  
+
+float _MaxSpeed;        
+float _MaxSteerForce;   
+
+float _SeparateWeight; 
+float _AlignmentWeight;
+float _CohesionWeight;
+
+float4 _WallCenter;     
+float4 _WallSize;      
+float  _AvoidWallWeight; 
+
+float3 _NoiseScales;
+
+int _Octaves;
+float _Frequency;
+
+float3 Sphere;
+
+float _InsideMeshWeight = 1000000;
+float _CurlWeight = 20;
+float _VertexFollowWeight = 10000;
+float _TriangleFollowWeight = 5;
+float _AvoidObjectsWeight = 5000;
+
+float _DrawScale;
+
+//noise
+
+	float Noise(float3 vec)
+	{
+		int X = (int)floor(vec.x) & 255;
+		int Y = (int)floor(vec.y) & 255;
+		int Z = (int)floor(vec.z) & 255;
+
+		vec.x -= floor(vec.x);
+		vec.y -= floor(vec.y);
+		vec.z -= floor(vec.z);
+
+		float u = Fade(vec.x);
+		float v = Fade(vec.y);
+		float w = Fade(vec.z);
+
+		int A, AA, AB, B, BA, BB;
+
+		A = _P[X + 0] + Y; AA = _P[A] + Z; AB = _P[A + 1] + Z;
+		B = _P[X + 1] + Y; BA = _P[B] + Z; BB = _P[B + 1] + Z;
+
+		return Lerp(w, Lerp(v, Lerp(u, Grad(_P[AA + 0], vec.x + 0, vec.y + 0, vec.z + 0),
+			Grad(_P[BA + 0], vec.x - 1, vec.y + 0, vec.z + 0)),
+			Lerp(u, Grad(_P[AB + 0], vec.x + 0, vec.y - 1, vec.z + 0),
+				Grad(_P[BB + 0], vec.x - 1, vec.y - 1, vec.z + 0))),
+			Lerp(v, Lerp(u, Grad(_P[AA + 1], vec.x + 0, vec.y + 0, vec.z - 1),
+				Grad(_P[BA + 1], vec.x - 1, vec.y + 0, vec.z - 1)),
+				Lerp(u, Grad(_P[AB + 1], vec.x + 0, vec.y - 1, vec.z - 1),
+					Grad(_P[BB + 1], vec.x - 1, vec.y - 1, vec.z - 1))));
+	}
+
+	float PerlinNoise(float3 vec)
+	{
+		float result = 0;
+		float amp = 1.0;
+
+		for (int i = 0; i < _Octaves; i++)
+		{
+			result += Noise(vec) * amp;
+			vec *= 2.0;
+			amp *= 0.5;
+		}
+
+		return result;
+	}
+
+	float3 Pnoise(float3 vec)
+	{
+		float x = PerlinNoise(vec);
+
+		float y = PerlinNoise(float3(
+			vec.y + 31.416,
+			vec.z - 47.853,
+			vec.x + 12.793
+			));
+
+		float z = PerlinNoise(float3(
+			vec.z - 233.145,
+			vec.x - 113.408,
+			vec.y - 185.31
+			));
+
+		return float3(x, y, z);
+	}
+
+
+	float3 SamplePotential(float3 pos, float time)
+	{
+		//float3 s = pos / _NoiseScales[0];
+		float3 s = pos / 0.1;
+		return Pnoise(s);
+	}
+	// パーリンノイズによるベクトル場
+	// 3Dとして3要素を計算。
+	// それぞれのノイズは明らかに違う（極端に大きなオフセット）を持たせた値とする
+
+
+
+	float3 CurlNoise(BoidData p)
+	{
+		const float e = 0.0009765625;
+		const float e2 = 2.0 * e;
+		const float invE2 = 1.0 / e2;
+
+		const float3 dx = float3(e, 0.0, 0.0);
+		const float3 dy = float3(0.0, e, 0.0);
+		const float3 dz = float3(0.0, 0.0, e);
+
+		float3 pos = p.position;
+
+		float3 p_x0 = SamplePotential(pos - dx, _Time);
+		float3 p_x1 = SamplePotential(pos + dx, _Time);
+		float3 p_y0 = SamplePotential(pos - dy, _Time);
+		float3 p_y1 = SamplePotential(pos + dy, _Time);
+		float3 p_z0 = SamplePotential(pos - dz, _Time);
+		float3 p_z1 = SamplePotential(pos + dz, _Time);
+
+		float x = (p_y1.z - p_y0.z) - (p_z1.y - p_z0.y);
+		float y = (p_z1.x - p_z0.x) - (p_x1.z - p_x0.z);
+		float z = (p_x1.y - p_x0.y) - (p_y1.x - p_y0.x);
+
+		return float3(x, y, z) * invE2;
+	}
+
+//noise
+
+float3 limit(float3 vec, float max)
+{
+	float length = sqrt(dot(vec, vec)); 
+	return (length > max && length > 0) ? vec.xyz * (max / length) : vec.xyz;
+}
+
+
+float3 avoidWall(float3 position)
+{
+	float3 wc = _WallCenter.xyz;
+	float3 ws = _WallSize.xyz;
+	float3 acc = float3(0, 0, 0);
+
+	acc.x = (position.x < wc.x - ws.x * 0.5) ? acc.x + 1.0 : acc.x;
+	acc.x = (position.x > wc.x + ws.x * 0.5) ? acc.x - 1.0 : acc.x;
+
+	acc.y = (position.y < wc.y - ws.y * 0.5) ? acc.y + 1.0 : acc.y;
+	acc.y = (position.y > wc.y + ws.y * 0.5) ? acc.y - 1.0 : acc.y;
+
+	acc.z = (position.z < wc.z - ws.z * 0.5) ? acc.z + 1.0 : acc.z;
+	acc.z = (position.z > wc.z + ws.z * 0.5) ? acc.z - 1.0 : acc.z;
+
+	return acc;
+}
+
+
+groupshared BoidData boid_data[SIMULATION_BLOCK_SIZE];
+groupshared MeshVertData mesh_data[SIMULATION_BLOCK_SIZE_VERT];
+
+float det(float3 a, float3 b, float3 c) {
+	return (a.x * b.y * c.z)
+		+ (a.y * b.z * c.x)
+		+ (a.z * b.x * c.y)
+		- (a.x * b.z * c.y)
+		- (a.y * b.x * c.z)
+		- (a.z * b.y * c.x);
+}
+float3 compute_nearest(float3 pos, float3 A, float3 B, float3 C) {
+	float norm = normalize(cross(B - A, C - A));
+	float div = det(A - B, A - C, -norm);
+	float beta = det(A - pos, A - C, -norm)/div;
+	float gamma = det(A - B, A - pos, -norm) / div;
+	float t = det(A - B, A - C, A-pos) / div;
+
+	if (1 > beta && beta > 0 &&
+		1 > gamma && gamma > 0 &&
+		1 > 1 - beta - gamma && 1 - beta - gamma > 0
+		)
+		return pos + t * (-norm);
+	else return A;
+}
+
+
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void ForceCS
+(
+	uint3 DTid : SV_DispatchThreadID,
+	uint3 Gid : SV_GroupID,          
+	uint3 GTid : SV_GroupThreadID,    
+	uint  GI : SV_GroupIndex          
+)
+{
+	const unsigned int P_ID = DTid.x; 
+	float3 P_position = _BoidDataBufferRead[P_ID].position;
+	float3 P_velocity = _BoidDataBufferRead[P_ID].velocity;
+
+	float3 force = float3(0, 0, 0); 
+
+	float3 sepPosSum = float3(0, 0, 0); 
+	int sepCount = 0; 
+
+	float3 aliVelSum = float3(0, 0, 0);
+	int aliCount = 0; 
+
+	float3 cohPosSum = float3(0, 0, 0); 
+	int cohCount = 0; 
+
+	uint3 nears = uint3(0,0,0);
+
+
+	float nearest_dist = 1000000;
+
+	float nearest_dist1 = 1000000;
+
+	float nearest_dist2 = 1000000;
+	[loop]
+	for (uint N_block_ID = 0; N_block_ID < (uint)_MaxBoidObjectNum;
+		N_block_ID += SIMULATION_BLOCK_SIZE)
+	{
+		boid_data[GI] = _BoidDataBufferRead[N_block_ID + GI];
+		GroupMemoryBarrierWithGroupSync();
+
+		// 他の個体との計算
+		for (int N_tile_ID = 0; N_tile_ID < SIMULATION_BLOCK_SIZE; N_tile_ID++)
+		{
+			float3 N_position = boid_data[N_tile_ID].position;
+			float3 N_velocity = boid_data[N_tile_ID].velocity; 
+
+			float3 diff = P_position - N_position; 
+			float  dist = sqrt(dot(diff, diff));   
+
+			if (dist > 0.0 && dist <= _SeparateNeighborhoodRadius && N_block_ID + N_tile_ID >= (uint)_MaxVertObjectNum)
+			{
+				float3 repulse = normalize(P_position - N_position);
+				
+				repulse /= dist*dist*dist;
+				sepPosSum += repulse; 
+				sepCount++;           
+			}
+
+			if (dist > 0.0 && dist <= _AlignmentNeighborhoodRadius)
+			{
+				aliVelSum += N_velocity; 
+				aliCount++;            
+			}
+			
+			if (dist > 0.0 && dist <= _CohesionNeighborhoodRadius)
+			{
+				cohPosSum += N_position;
+				cohCount++;              
+			}
+		}
+		GroupMemoryBarrierWithGroupSync();
+	}
+	
+	//近傍頂点探索
+	[loop]
+	for (uint N_block_ID = 0; N_block_ID < (uint)_MaxVertObjectNum;
+		N_block_ID += SIMULATION_BLOCK_SIZE_VERT)
+	{
+		mesh_data[GI] = _MeshBuffer[N_block_ID + GI];
+		GroupMemoryBarrierWithGroupSync();
+
+		for (int N_tile_ID = 0; N_tile_ID < SIMULATION_BLOCK_SIZE; N_tile_ID++)
+		{
+
+			float3 V_position = mesh_data[N_tile_ID].position;
+			float3 V_normal = mesh_data[N_tile_ID].normal;
+
+			float vert_dist = length(P_position - V_position);
+
+			if (vert_dist < nearest_dist || (N_block_ID == 0 && N_tile_ID == 0)) {
+				nearest_dist2 = nearest_dist1;
+				nears.z = nears.y;
+
+				nearest_dist1 = nearest_dist;
+				nears.y = nears.x;
+
+				nearest_dist = vert_dist;
+				nears.x = N_block_ID + N_tile_ID;
+			}
+			else if (vert_dist < nearest_dist1 || (N_block_ID == 0 && N_tile_ID == 0)) {
+				nearest_dist2 = nearest_dist1;
+				nears.z = nears.y;
+
+				nearest_dist1 = vert_dist;
+				nears.y = N_block_ID + N_tile_ID;
+			}
+			else if (vert_dist < nearest_dist2 || (N_block_ID == 0 && N_tile_ID == 0)) {
+				nears.z = N_block_ID + N_tile_ID;
+				nearest_dist2 = vert_dist;
+			}
+		}
+		GroupMemoryBarrierWithGroupSync();
+	}
+	
+	
+
+	// 操舵力（分離）
+	float3 sepSteer = (float3)0.0;
+	if (sepCount > 0)
+	{
+		sepSteer = sepPosSum;
+		sepSteer = sepSteer - P_velocity;           
+		sepSteer = limit(sepSteer, _MaxSteerForce); 
+	}
+
+
+	float3 aliSteer = (float3)0.0;
+	if (aliCount > 0)
+	{
+		aliSteer = aliVelSum / (float)aliCount;    
+		//aliSteer = normalize(aliSteer) * _MaxSpeed;
+		aliSteer = aliSteer - P_velocity;          
+		aliSteer = limit(aliSteer, _MaxSteerForce); 
+	}
+	// 操舵力（結合）
+	float3 cohSteer = (float3)0.0;
+	if (cohCount > 0)
+	{
+		cohPosSum = cohPosSum / (float)cohCount;   
+		cohSteer = cohPosSum - P_position;     
+		//cohSteer = normalize(cohSteer) * _MaxSpeed;
+		cohSteer = cohSteer - P_velocity;          
+		cohSteer = limit(cohSteer, _MaxSteerForce); 
+	}
+	float3 f = (compute_nearest(P_position, _MeshBuffer[nears.x].position, _MeshBuffer[nears.y].position, _MeshBuffer[nears.z].position) - P_position);
+	
+	if (P_ID >= _MaxVertObjectNum || _mode == 1) {
+		if (dot(normalize(_MeshBuffer[nears.x].position - P_position), normalize(_MeshBuffer[nears.x].normal)) <= 0.0 &&
+			dot(normalize(_MeshBuffer[nears.y].position - P_position), normalize(_MeshBuffer[nears.y].normal)) <= 0.0 &&
+			dot(normalize(_MeshBuffer[nears.z].position - P_position), normalize(_MeshBuffer[nears.z].normal)) <= 0.0
+			&& _mode == 0
+			) {
+			force = f;
+			float3 de = force - _BoidForceBufferWrite[P_ID].prevE;
+			_BoidForceBufferWrite[P_ID].prevE = force;
+
+			force += 10 * de;
+			force = force * _InsideMeshWeight;
+
+			force += sepSteer * _SeparateWeight;
+			if (_mode == 0) _AlignmentWeight = 0.0;
+			force += aliSteer * _AlignmentWeight;
+			if (_mode == 0) _CohesionWeight = 0.0;
+			force += cohSteer * _CohesionWeight;
+			
+			//force = P_velocity + force * _DeltaTime;
+			if (_debug)_BoidForceBufferWrite[P_ID].col = float3(0, 0, 1);
+		}
+		else {
+			_BoidForceBufferWrite[P_ID].prevE = float3(0, 0, 0);
+			if (length(f) < 0.1 && false) {
+				//force = -f * 500;
+				//force = float3(0, 0, 0);
+				//force = -P_velocity / _DeltaTime;
+				if (_debug)_BoidForceBufferWrite[P_ID].col = float3(1, 1, 1);
+			}
+			else {
+				if (_mode == 0) {
+					force = ((_MeshBuffer[_BoidForceBufferWrite[P_ID].nearests.x].position + _MeshBuffer[_BoidForceBufferWrite[P_ID].nearests.y].position + _MeshBuffer[_BoidForceBufferWrite[P_ID].nearests.z].position) / 3 - _BoidForceBufferWrite[P_ID].nearP) * _TriangleFollowWeight;
+					force += CurlNoise(_BoidDataBufferRead[P_ID])* _CurlWeight;
+					force += sepSteer * _SeparateWeight;
+				}
+				else {
+					force = float3(0, 0, 0);
+					force += CurlNoise(_BoidDataBufferRead[P_ID]) * _CurlWeight * 50;
+					force += sepSteer * _SeparateWeight;
+					force += aliSteer * _AlignmentWeight;
+					force += cohSteer * _CohesionWeight;
+				}
+				force *= _DeltaTime;
+				if (_debug)_BoidForceBufferWrite[P_ID].col = float3(0, 1, 0);
+			}
+		}
+
+		_BoidForceBufferWrite[P_ID].nearests = nears;
+		_BoidForceBufferWrite[P_ID].nearP = (_MeshBuffer[nears.x].position + _MeshBuffer[nears.y].position + _MeshBuffer[nears.z].position) / 3;
+	}
+	else {
+		force = (_MeshBuffer[P_ID].position - P_position);
+		float3 de = force - _BoidForceBufferWrite[P_ID].prevE;
+		_BoidForceBufferWrite[P_ID].prevE = force;
+
+		force += 10 * de;
+		//force -= 5 * P_velocity * length(force);
+
+		force *= _DeltaTime ;
+		force *= _VertexFollowWeight;
+		if(_debug)_BoidForceBufferWrite[P_ID].col = float3(1, 0, 0);
+	}
+
+	float rad = 7.0;
+	if (length(Sphere - P_position) < rad*2) {
+		float3 rate = min(1, 2 - 2 * (length(Sphere - P_position) / (rad * 2)));
+		force = rate * _AvoidObjectsWeight * (P_position - Sphere) * (rad- length(Sphere - P_position)) * (rad - length(Sphere - P_position)) + (1-rate)*force;
+		if (_debug)_BoidForceBufferWrite[P_ID].col = float3(1, 1, 1);
+	}
+
+	_BoidForceBufferWrite[P_ID].force = force; 
+	_BoidForceBufferWrite[P_ID].neib = sepCount;
+}
+
+
+
+
+[numthreads(SIMULATION_BLOCK_SIZE, 1, 1)]
+void IntegrateCS
+(
+	uint3 DTid : SV_DispatchThreadID
+)
+{
+	const unsigned int P_ID = DTid.x;          
+	
+											           
+	BoidData b = _BoidDataBufferWrite[P_ID];  
+
+	float3 oldVel = b.velocity;
+	float3 force = _BoidForceBufferRead[P_ID].force; 
+	float3 forward = b.forward;
+	float speed = length(b.velocity);
+
+	force += avoidWall(b.position) * _AvoidWallWeight; 	
+
+	//b.velocity = lerp(b.velocity, force, 0.9);
+	b.velocity = b.velocity + force * _DeltaTime;
+
+	b.forward = normalize(b.forward);
+	if (_DeltaTime > 0.05)_MaxSpeed = 0.1;
+	b.velocity = limit(b.velocity, _MaxSpeed);
+	b.position += b.velocity * _DeltaTime;   
+	
+	if(length(b.velocity) > 0.01) b.forward = normalize(b.velocity);
+
+	b.Color = _BoidForceBufferRead[P_ID].col;
+	b.neib = _BoidForceBufferRead[P_ID].neib;
+	b.Scale = _DrawScale;
+											           
+	_BoidDataBufferWrite[P_ID] = b;           
+}

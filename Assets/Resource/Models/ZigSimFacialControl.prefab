@@ -1,0 +1,168 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &8040365512516629740
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8040365512516629743}
+  - component: {fileID: 8040365512516629742}
+  - component: {fileID: 8040365512516629741}
+  m_Layer: 0
+  m_Name: ZigSimFacialControl
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8040365512516629743
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8040365512516629740}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_RootOrder: 0
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8040365512516629742
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8040365512516629740}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8439459483d6c8541b7e81b63c2c3d45, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  skin: {fileID: 0}
+  blendShapeList:
+  - None
+  - blendShape2.eyeBlink_L
+  - blendShape2.eyeLookDown_L
+  - blendShape2.eyeLookIn_L
+  - blendShape2.eyeLookOut_L
+  - blendShape2.eyeLookUp_L
+  - blendShape2.eyeSquint_L
+  - blendShape2.eyeWide_L
+  - blendShape2.eyeBlink_R
+  - blendShape2.eyeLookDown_R
+  - blendShape2.eyeLookIn_R
+  - blendShape2.eyeLookOut_R
+  - blendShape2.eyeLookUp_R
+  - blendShape2.eyeWide_R
+  - blendShape2.jawForward
+  - blendShape2.jawLeft
+  - blendShape2.jawOpen
+  - blendShape2.jawRight
+  - blendShape2.mouthPucker
+  - blendShape2.mouthFunnel
+  - blendShape2.mouthClose
+  - blendShape2.mouthSmile_R
+  - blendShape2.mouthLeft
+  - blendShape2.mouthRight
+  - blendShape2.mouthSmile_L
+  - blendShape2.mouthFrown_R
+  - blendShape2.mouthFrown_L
+  - blendShape2.mouthDimple_L
+  - blendShape2.mouthDimple_R
+  - blendShape2.mouthStretch_R
+  - blendShape2.mouthStretch_L
+  - blendShape2.mouthRollUpper
+  - blendShape2.mouthRollLower
+  - blendShape2.mouthShrugUpper
+  - blendShape2.mouthShrugLower
+  - blendShape2.mouthPress_L
+  - blendShape2.mouthPress_R
+  - blendShape2.mouthLowerDown_L
+  - blendShape2.mouthLowerDown_R
+  - blendShape2.mouthUpperUp_R
+  - blendShape2.mouthUpperUp_L
+  - blendShape2.browDown_L
+  - blendShape2.browDown_R
+  - blendShape2.browInnerUp
+  - blendShape2.browOuterUp_R
+  - blendShape2.browOuterUp_L
+  - blendShape2.cheekPuff
+  - blendShape2.cheekSquint_L
+  - blendShape2.cheekSquint_R
+  - blendShape2.noseSneer_L
+  - blendShape2.noseSneer_R
+  indexList: 32000000310000002700000028000000260000002500000024000000230000001d0000001e00000017000000160000001c0000001b000000190000001a0000001300000012000000150000001800000014000000110000000f000000100000000e0000000c000000050000000b000000040000000a00000003000000090000000200000000000000060000000d000000070000000800000001000000300000002f0000002e0000002c0000002d0000002a000000290000002b0000000000000000000000000000000000000000000000
+  strengthMultiplierList:
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+  - 1
+--- !u!114 &8040365512516629741
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8040365512516629740}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 962fa02c198e1da4f9a6df66bffdb49d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  port: 8888
+  arkitFacialControl: {fileID: 8040365512516629742}
+  text: {fileID: 0}
